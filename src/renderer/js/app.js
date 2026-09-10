@@ -758,7 +758,7 @@
     const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `quantdesk_scan_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `asharequant_scan_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     toast('已导出 CSV');
   }

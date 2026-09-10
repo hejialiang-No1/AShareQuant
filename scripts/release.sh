@@ -2,8 +2,9 @@
 # 创建 GitHub Release 并上传 dmg
 set -e
 cd "$(dirname "$0")/.."
-export HTTPS_PROXY=socks5h://127.0.0.1:7890
-export HTTP_PROXY=socks5h://127.0.0.1:7890
+# 默认走本机 Clash 代理；若已通过环境变量指定代理则尊重之（便于在别的网络环境下发布）
+export HTTPS_PROXY="${HTTPS_PROXY:-socks5h://127.0.0.1:7890}"
+export HTTP_PROXY="${HTTP_PROXY:-socks5h://127.0.0.1:7890}"
 TOKEN="$1"
 OWNER="hejialiang-No1"
 REPO="AShareQuant"
