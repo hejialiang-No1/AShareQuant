@@ -11,6 +11,7 @@ const ds = require('../src/main/datasource');
 const Ind = require('../src/shared/indicators');
 const Fac = require('../src/shared/factors');
 const BT = require('../src/shared/backtest');
+const Sig = require('../src/shared/signals');
 
 ds.initCache(path.join(os.tmpdir(), 'asharequant-smoke-cache'));
 
@@ -93,6 +94,28 @@ function ok(name, cond, extra) {
     const atr = Ind.atr(prices, prices, prices, 14);
     check('ATR', atr[119] > 0, `ATR=${atr[119].toFixed(2)}`);
   } catch (e) { check('\u6280\u672F\u6307\u6807', false, e.message); }
+
+  console.log('\n--- \u4E70\u5356\u70B9\u4FE1\u53F7 ---');
+  try {
+    // 合成 K 线：先跌（MA5<MA20）→ 强涨（金叉买点）→ 回落（死叉卖点）
+    const mk = (p) => ({ date: '2024' + String(p).padStart(4, '0'), open: p, high: p + 1, low: p - 1, close: p, volume: 1000 });
+    const synth = [];
+    for (let i = 0; i < 40; i++) synth.push(mk(100 - i));
+    for (let i = 0; i < 40; i++) synth.push(mk(61 + i * 2));
+    for (let i = 0; i < 40; i++) synth.push(mk(139 - i * 2));
+    const pts = Sig.detect(synth, { minGap: 8 });
+    check('\u4E70\u5356\u70B9\u8FD4\u56DE\u6570\u7EC4', Array.isArray(pts), `\u5171 ${pts.length} \u4E2A`);
+    const buys = pts.filter((p) => p.type === 'buy');
+    const sells = pts.filter((p) => p.type === 'sell');
+    check('\u81F3\u5C11 1 \u4E2A\u4E70\u70B9', buys.length >= 1, `\u4E70 ${buys.length} \u5356 ${sells.length}`);
+    check('\u81F3\u5C11 1 \u4E2A\u5356\u70B9', sells.length >= 1);
+    const valid = pts.every((p) => ['buy', 'sell'].includes(p.type) && p.reason && p.strength >= 1 && p.strength <= 3 && p.index >= 0);
+    check('\u7ED3\u6784\u5408\u6CD5', valid);
+    const minGap = (arr) => { for (let i = 1; i < arr.length; i++) if (arr[i] - arr[i - 1] < 8) return false; return true; };
+    check('\u540C\u65B9\u5411\u53BB\u91CD(minGap)', minGap(buys.map((b) => b.index)) && minGap(sells.map((s) => s.index)));
+    const sum = Sig.summary(pts);
+    check('summary \u7EDF\u8BA1', sum.buyCount === buys.length && sum.sellCount === sells.length);
+  } catch (e) { check('\u4E70\u5356\u70B9\u4FE1\u53F7', false, e.message); }
 
   console.log('\n--- \u56E0\u5B50\u5206\u6790 ---');
   try {

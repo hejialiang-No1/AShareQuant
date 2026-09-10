@@ -3,7 +3,7 @@
  * 依赖 window.qd（preload 暴露）与 chart.js
  */
 (function () {
-  const { ind, factors, bt } = window.qd;
+  const { ind, factors, bt, signals } = window.qd;
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -32,8 +32,9 @@
     watchSort: { key: 'changePct', dir: -1 },
     current: null, // 当前分析的 secid
     currentPeriod: 'day',
-    chart: null,
+      chart: null,
     btResult: null,
+    signals: [],
     timers: {},
     sectorType: 'hy',
     sectors: [],
@@ -444,6 +445,12 @@
         state.chart.render();
       }
     });
+    $('#sigToggle').addEventListener('change', () => {
+      if (state.chart) {
+        state.chart.showSignals = $('#sigToggle').checked;
+        state.chart.render();
+      }
+    });
     window.addEventListener('resize', () => {
       if (state.chart) state.chart.render();
       if (state.btResult) drawEquityPanel();
@@ -497,6 +504,12 @@
       state.chart.setData(bars, indicators, $('#subInd').value);
       state.chart.onHover = (i, x, y) => showTip(i, bars, indicators, x, y);
 
+      // 买卖点信号
+      const sigs = signals.detect(bars, { minGap: 8 });
+      state.signals = sigs;
+      state.chart.setSignals(sigs);
+      renderSignalsPanel(sigs);
+
       // 图例
       const last = bars[bars.length - 1];
       const m = indicators;
@@ -539,12 +552,19 @@
     const b = bars[i];
     const c = b.close >= b.open ? 'up' : 'down';
     const ma = (arr) => (arr && arr[i] != null ? f2(arr[i]) : '--');
-    tip.innerHTML = `<div>${esc(b.date)}</div>
+    let html = `<div>${esc(b.date)}</div>
       <div>开 <span class="${c}">${f2(b.open)}</span> 高 <span class="${c}">${f2(b.high)}</span></div>
       <div>收 <span class="${c}">${f2(b.close)}</span> 低 <span class="${c}">${f2(b.low)}</span></div>
       <div>量 ${amount(b.volume)}</div>
       <div style="margin-top:4px;color:#f0b90b">MA5 ${ma(inds.ma5)}  MA20 ${ma(inds.ma20)}</div>
       <div style="color:#a78bfa">RSI ${inds.rsi[i] != null ? inds.rsi[i].toFixed(1) : '--'}</div>`;
+    const s = (state.signals || []).find((x) => x.index === i);
+    if (s) {
+      const col = s.type === 'buy' ? '#f6465d' : '#0ecb81';
+      const tag = s.type === 'buy' ? '买点' : '卖点';
+      html += `<div style="margin-top:4px;color:${col}">▸ ${tag}：${esc(s.reason)}</div>`;
+    }
+    tip.innerHTML = html;
     tip.style.display = 'block';
     const wrapW = tip.parentElement.clientWidth;
     const tw = tip.offsetWidth;
@@ -624,6 +644,41 @@
         addWatch({ secid, code: q ? q.code : secid.split('.')[1], name: q ? q.name : '', market: Number(secid.split('.')[0]) });
       });
     }
+  }
+
+  // ------------------------------------------------------------ 买卖点面板
+
+  function renderSignalsPanel(sigs) {
+    const buys = sigs.filter((s) => s.type === 'buy');
+    const sells = sigs.filter((s) => s.type === 'sell');
+    const lastBuy = buys[buys.length - 1];
+    const lastSell = sells[sells.length - 1];
+    const f2b = (v) => (v == null ? '--' : Number(v).toFixed(2));
+    const sumCard = (k, v, sub, cls2) =>
+      `<div class="sig-card ${cls2}"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${sub}</div></div>`;
+    $('#sigSummary').innerHTML = [
+      sumCard('最新买点', lastBuy ? `${lastBuy.date}` : '—', lastBuy ? `${f2b(lastBuy.price)} · ${esc(lastBuy.reason)}` : '近250根K线内无', 'buy'),
+      sumCard('最新卖点', lastSell ? `${lastSell.date}` : '—', lastSell ? `${f2b(lastSell.price)} · ${esc(lastSell.reason)}` : '近250根K线内无', 'sell'),
+      sumCard('买点 / 卖点', `${buys.length} / ${sells.length}`, '近250根K线信号数', ''),
+    ].join('');
+
+    const recent = sigs.slice(-20).reverse();
+    $('#sigBox').innerHTML = recent.length
+      ? recent
+          .map((s) => {
+            const col = s.type === 'buy' ? '#f6465d' : '#0ecb81';
+            const tagCls = s.type === 'buy' ? 'bull' : 'bear';
+            const star = s.strength >= 3 ? '★' : s.strength >= 2 ? '✦' : '';
+            return `<div class="sig-row">
+              <span class="sig-dot" style="background:${col}"></span>
+              <span class="dt">${esc(s.date)}</span>
+              <span class="tag ${tagCls}">${s.type === 'buy' ? '买' : '卖'}</span>
+              <span class="pr" style="color:${col}">${f2b(s.price)}</span>
+              <span class="rs">${esc(s.reason)} ${star ? `<span style="color:${col}">${star}</span>` : ''}</span>
+            </div>`;
+          })
+          .join('')
+      : '<div class="empty">近250根K线内未识别到买卖点</div>';
   }
 
   // ------------------------------------------------------------ 量化选股

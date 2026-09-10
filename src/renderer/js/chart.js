@@ -40,6 +40,8 @@
       this.offset = 0; // 右侧偏移（0 = 贴最新）
       this.hover = -1;
       this.onHover = null;
+      this.signals = [];        // 买卖点数组
+      this.showSignals = true;  // K线标注开关
       this.pad = { l: 8, r: 62, t: 12, b: 22 };
       this._bind();
     }
@@ -50,6 +52,12 @@
       if (sub) this.sub = sub;
       this.count = Math.min(this.count || 120, this.bars.length);
       this.offset = 0;
+      this.render();
+    }
+
+    /** 设置买卖点（来自 signals.detect） */
+    setSignals(arr) {
+      this.signals = arr || [];
       this.render();
     }
 
@@ -271,6 +279,37 @@
         ctx.fillStyle = '#fff';
         ctx.font = '10px SF Mono, Menlo, monospace';
         ctx.fillText(fmt(last.close), this.pad.l + geo.innerW + 6, y + 4);
+      }
+
+      // ---- 买卖点标记（红↑买 / 绿↓卖）----
+      if (this.showSignals && this.signals.length) {
+        const C_UP = '#f6465d';
+        const C_DN = '#0ecb81';
+        for (const s of this.signals) {
+          if (s.index < start || s.index >= end) continue;
+          const x = xOf(s.index);
+          const b = bars[s.index];
+          if (!b) continue;
+          if (s.type === 'buy') {
+            const y = yOf(b.low, geo.main) + 6;
+            ctx.fillStyle = C_UP;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x - 4.6, y + 9);
+            ctx.lineTo(x + 4.6, y + 9);
+            ctx.closePath();
+            ctx.fill();
+          } else {
+            const y = yOf(b.high, geo.main) - 6;
+            ctx.fillStyle = C_DN;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x - 4.6, y - 9);
+            ctx.lineTo(x + 4.6, y - 9);
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
       }
 
       // ---- 成交量

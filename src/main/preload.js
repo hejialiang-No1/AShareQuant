@@ -7,6 +7,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const Indicators = require('../shared/indicators');
 const Factors = require('../shared/factors');
 const Backtest = require('../shared/backtest');
+const Signals = require('../shared/signals');
 
 const api = {
   // 应用
@@ -47,6 +48,7 @@ const api = {
   ind: Indicators,
   factors: Factors,
   bt: Backtest,
+  signals: Signals,
 };
 
 contextBridge.exposeInMainWorld('qd', api);
