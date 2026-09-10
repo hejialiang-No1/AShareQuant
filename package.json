@@ -1,0 +1,61 @@
+{
+  "name": "asharequant",
+  "productName": "AShareQuant",
+  "version": "1.0.0",
+  "description": "AShareQuant - A股量化终端 (China A-Share Quant Terminal)",
+  "main": "src/main/main.js",
+  "author": "hejialiang",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "pack": "electron-builder --dir --mac --arm64",
+    "dist": "electron-builder --mac --arm64 --publish never",
+    "icon": "python3 scripts/make-icon.py"
+  },
+  "devDependencies": {
+    "electron": "44.2.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.asharequant.terminal",
+    "productName": "AShareQuant",
+    "copyright": "Copyright © 2026 AShareQuant",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "build"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        }
+      ],
+      "category": "public.app-category.finance",
+      "icon": "assets/icon.icns",
+      "darkModeSupport": true,
+      "hardenedRuntime": false,
+      "identity": null,
+      "extendInfo": {
+        "NSHighResolutionCapable": true
+      }
+    },
+    "dmg": {
+      "title": "AShareQuant A股量化终端",
+      "sign": false,
+      "window": {
+        "width": 700,
+        "height": 440
+      },
+      "contents": [
+        { "x": 180, "y": 210, "type": "link", "path": "/Applications" },
+        { "x": 520, "y": 210, "type": "file" }
+      ]
+    }
+  }
+}
