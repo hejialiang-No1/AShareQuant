@@ -66,14 +66,19 @@ function analyze(bars, quote) {
   const ma10 = I.sma(c, 10);
   const ma20 = I.sma(c, 20);
   const ma60 = I.sma(c, 60);
+  const ma120 = I.sma(c, 120);
   const rsiArr = I.rsi(c, 14);
   const rsi = rsiArr[n] ?? 50;
   const macd = I.macd(c);
+  const kdj = I.kdj(h, l, c);
   const boll = I.boll(c, 20, 2);
   const atrArr = I.atr(h, l, c, 14);
   const atr = atrArr[n] ?? 0;
   const volMa5 = I.sma(v, 5);
   const volMa20 = I.sma(v, 20);
+  const annualVol = I.volatility(c, 60);          // 年化波动率 %
+  const hi52 = I.highest(h, 250);                 // 52周（约250个交易日）最高
+  const lo52 = I.lowest(l, 250);                  // 52周最低
 
   // ---------------- 1. 动量（18）
   const r5 = n >= 5 ? (c[n] / c[n - 5] - 1) * 100 : 0;
@@ -235,11 +240,18 @@ function analyze(bars, quote) {
     recentLimitUp,
     metrics: {
       rsi: Math.round(rsi * 10) / 10,
-      ma5: ma5[n], ma10: ma10[n], ma20: ma20[n], ma60: ma60[n],
+      ma5: ma5[n], ma10: ma10[n], ma20: ma20[n], ma60: ma60[n], ma120: ma120[n],
+      macdDif: macd.dif ? macd.dif[n] : null,
+      macdDea: macd.dea ? macd.dea[n] : null,
+      macdHist: macdHist,
+      kdjK: kdj.k ? kdj.k[n] : null,
+      kdjD: kdj.d ? kdj.d[n] : null,
+      kdjJ: kdj.j ? kdj.j[n] : null,
       bollUp: boll.upper ? boll.upper[n] : null,
       bollLow: boll.lower ? boll.lower[n] : null,
       atr: Math.round(atr * 100) / 100,
       atrPct: Math.round(atrPct * 100) / 100,
+      volatility: annualVol == null ? null : Math.round(annualVol * 100) / 100,
       volRatio: Math.round(vRatio * 100) / 100,
       r5: Math.round(r5 * 100) / 100,
       r20: Math.round(r20 * 100) / 100,
@@ -247,6 +259,9 @@ function analyze(bars, quote) {
       turnover,
       distHigh: Math.round(((price / hi60) - 1) * 1000) / 10,
       hi60, lo60,
+      // 52周口径（供面板展示，与 60 日的 hi60/lo60 区分）
+      hi52, lo52,
+      distHigh52: hi52 ? Math.round(((price / hi52) - 1) * 1000) / 10 : null,
     },
   };
 }

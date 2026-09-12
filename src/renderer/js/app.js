@@ -3,7 +3,7 @@
  * 依赖 window.qd（preload 暴露）与 chart.js
  */
 (function () {
-  const { ind, factors, bt, signals } = window.qd;
+  const { ind, factors, bt, signals, chip, patterns, levels } = window.qd;
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -35,9 +35,13 @@
       chart: null,
     btResult: null,
     signals: [],
+    chip: null,
+    levels: null,
+    portfolio: [],
     timers: {},
     sectorType: 'hy',
     sectors: [],
+    indexes: [],
   };
 
   // ------------------------------------------------------------ 工具
@@ -95,9 +99,11 @@
     bindAnalyze();
     bindScan();
     bindSector();
+    bindPortfolio();
     bindBacktest();
     bindAlerts();
     bindSettings();
+    bindTheme();
     startClock();
 
     state.config = await qd.storeGet('config');
@@ -108,6 +114,8 @@
     }
     state.watchlist = wl;
     state.alerts = (await qd.storeGet('alerts')) || [];
+    state.portfolio = (await qd.storeGet('portfolio')) || [];
+    applyTheme(state.config.theme || 'dark');
 
     // 配置回填
     $('#refreshRate').value = String(state.config.refreshInterval || 15000);
@@ -130,9 +138,12 @@
 
     renderWatch();
     renderAlerts();
+    renderPortfolio();
     renderPool();
     loadIndexes();
+    loadSectors();
     refreshQuotes();
+    refreshPortfolio();
     scheduleRefresh();
     scheduleAlerts();
 
@@ -168,6 +179,7 @@
         $$('.view').forEach((x) => x.classList.remove('active'));
         $('#view-' + v).classList.add('active');
         if (v === 'analyze' && state.chart) state.chart.render();
+        if (v === 'analyze' && state.chip) renderChipPanel(state.chip);
         if (v === 'backtest' && state.btResult) drawEquityPanel();
       });
     });
@@ -252,7 +264,9 @@
     try {
       const list = await qd.indexes();
       if (!list.length) return;
+      state.indexes = list;
       $('#indexStrip').innerHTML = list
+        .slice(0, 5)
         .map((q) => {
           const c = cls(q.changePct);
           return `<div class="idx"><span class="nm">${esc(q.name)}</span><span class="pv">${f2(
@@ -260,9 +274,43 @@
           )}</span><span class="pc ${c}">${pct(q.changePct)}</span></div>`;
         })
         .join('');
+      updateSentiment();
     } catch {
       /* 指数失败不阻塞 */
     }
+  }
+
+  /** 市场情绪温度计：指数涨跌 + 行业板块涨跌家数加权为 0-100 */
+  function updateSentiment() {
+    const idx = state.indexes || [];
+    const sec = state.sectors || [];
+    if (!idx.length && !sec.length) return;
+    let score = 50;
+    // 指数维度（占 50%）：主要指数涨跌幅映射
+    const idxAvg = idx.length ? idx.reduce((a, q) => a + (q.changePct || 0), 0) / idx.length : 0;
+    let idxScore = 50 + idxAvg * 12;
+    // 板块维度（占 50%）：上涨板块占比
+    let secScore = 50;
+    if (sec.length) {
+      const up = sec.filter((s) => (s.changePct || 0) > 0).length;
+      secScore = (up / sec.length) * 100;
+    }
+    const hasIdx = idx.length > 0;
+    const hasSec = sec.length > 0;
+    if (hasIdx && hasSec) score = idxScore * 0.5 + secScore * 0.5;
+    else if (hasIdx) score = idxScore;
+    else score = secScore;
+    score = Math.max(0, Math.min(100, Math.round(score)));
+
+    const bar = $('#sentBar');
+    const val = $('#sentVal');
+    if (!bar || !val) return;
+    bar.style.width = score + '%';
+    val.textContent = score;
+    const col = score >= 70 ? 'var(--up)' : score >= 55 ? 'var(--orange)' : score >= 45 ? 'var(--gray)' : 'var(--down)';
+    val.style.color = col;
+    const box = $('#sentiment');
+    if (box) box.title = `市场情绪 ${score}/100（指数 ${Math.round(idxScore)} · 板块 ${Math.round(secScore)}）`;
   }
 
   // ------------------------------------------------------------ 自选行情
@@ -399,24 +447,42 @@
   }
 
   async function renderPool() {
+    const groups = [
+      ['tech', 'AI算力'],
+      ['semi', '半导体'],
+      ['newenergy', '新能源'],
+      ['blue', '核心蓝筹'],
+      ['consumer', '消费医药'],
+    ];
     try {
       const pool = await qd.pool();
-      const picks = pool.filter((p) => ['AI算力/云', '半导体', '指数ETF'].includes(p.group)).slice(0, 46);
-      $('#poolChips').innerHTML = picks
-        .map(
-          (p) =>
-            `<button class="btn sm" data-add='${JSON.stringify(p)}' title="${esc(p.name)}">${esc(p.code)}</button>`
-        )
+      const box = $('#poolChips');
+      if (!pool || !pool.length) {
+        box.innerHTML = '<div class="empty" style="padding:18px">股票池为空</div>';
+        return;
+      }
+      box.innerHTML = groups
+        .map(([key, label]) => {
+          const items = pool.filter((p) => p.group === key);
+          if (!items.length) return '';
+          const chips = items
+            .map((p) => {
+              const payload = { secid: p.secid, code: p.code, name: p.name, market: String(p.secid).split('.')[0] };
+              return `<button class="btn sm" data-add='${esc(JSON.stringify(payload))}' title="${esc(p.name)}">${esc(p.code)}</button>`;
+            })
+            .join('');
+          return `<div class="pool-group"><span class="pg-label">${esc(label)}</span><div class="pg-chips">${chips}</div></div>`;
+        })
         .join('');
-      $('#poolChips')
-        .querySelectorAll('[data-add]')
-        .forEach((b) =>
-          b.addEventListener('click', () => {
-            const p = JSON.parse(b.dataset.add);
-            addWatch({ secid: p.secid, code: p.code, name: p.name, market: p.market });
-          })
-        );
-    } catch {}
+      box.querySelectorAll('[data-add]').forEach((b) =>
+        b.addEventListener('click', () => {
+          const p = JSON.parse(b.dataset.add);
+          addWatch({ secid: p.secid, code: p.code, name: p.name, market: p.market });
+        })
+      );
+    } catch {
+      /* 股票池失败不阻塞 */
+    }
   }
 
   // ------------------------------------------------------------ 个股分析
@@ -454,6 +520,7 @@
     window.addEventListener('resize', () => {
       if (state.chart) state.chart.render();
       if (state.btResult) drawEquityPanel();
+      if (state.chip) renderChipPanel(state.chip);
     });
   }
 
@@ -477,10 +544,16 @@
         return;
       }
       const bars = k.bars;
-      const closes = bars.map((b) => b.close);
-      const highs = bars.map((b) => b.high);
-      const lows = bars.map((b) => b.low);
-      const vols = bars.map((b) => b.volume || 0);
+      // 数据源使用短字段名 {t,o,h,l,c,v}，此处做双字段名兼容
+      const bOpen = (b) => (b.open != null ? b.open : b.o);
+      const bHigh = (b) => (b.high != null ? b.high : b.h);
+      const bLow = (b) => (b.low != null ? b.low : b.l);
+      const bClose = (b) => (b.close != null ? b.close : b.c);
+      const bVol = (b) => (b.volume != null ? b.volume : (b.v || 0));
+      const closes = bars.map(bClose);
+      const highs = bars.map(bHigh);
+      const lows = bars.map(bLow);
+      const vols = bars.map(bVol);
 
       const indicators = {
         ma5: ind.sma(closes, 5),
@@ -510,20 +583,40 @@
       state.chart.setSignals(sigs);
       renderSignalsPanel(sigs);
 
+      // 支撑 / 压力位
+      const lv = levels.compute(bars, { price: bars[bars.length - 1].close });
+      state.levels = lv;
+      state.chart.setLevels(lv);
+      renderLevelsPanel(lv);
+
+      // K线形态
+      const pats = patterns.detect(bars);
+      state.patterns = pats;
+      state.chart.setPatterns(pats);
+      renderPatternsPanel(pats, bars);
+
+      // 筹码分布
+      const qt = state.quotes.get(secid);
+      const cp = chip.compute(bars, { turnover: qt ? qt.turnover : 0 });
+      state.chip = cp;
+      renderChipPanel(cp);
+
       // 图例
       const last = bars[bars.length - 1];
+      const lastO = last.open != null ? last.open : last.o;
+      const lastC = last.close != null ? last.close : last.c;
       const m = indicators;
       $('#klineLegend').innerHTML = [
-        `<span><i style="background:${last.close >= last.open ? '#f6465d' : '#0ecb81'}"></i>${esc(
+        `<span><i style="background:${lastC >= lastO ? '#ff453a' : '#30d158'}"></i>${esc(
           k.name || secid
-        )} ${f2(last.close)}</span>`,
+        )} ${f2(lastC)}</span>`,
         ['ma5', 'MA5'], ['ma10', 'MA10'], ['ma20', 'MA20'], ['ma60', 'MA60'],
       ]
         .map((x) => {
           if (typeof x === 'string') return `<span>${x}</span>`;
           const v = m[x[0]] ? m[x[0]][m[x[0]].length - 1] : null;
           return `<span><i style="background:${
-            { ma5: '#f0b90b', ma10: '#4a9eff', ma20: '#a78bfa', ma60: '#0ecb81' }[x[0]]
+            { ma5: '#ffd60a', ma10: '#0a84ff', ma20: '#bf5af2', ma60: '#30d158' }[x[0]]
           }"></i>${x[1]} ${f2(v)}</span>`;
         })
         .join('');
@@ -550,19 +643,29 @@
       return;
     }
     const b = bars[i];
-    const c = b.close >= b.open ? 'up' : 'down';
+    const bO = b.open != null ? b.open : b.o;
+    const bC = b.close != null ? b.close : b.c;
+    const bH = b.high != null ? b.high : b.h;
+    const bL = b.low != null ? b.low : b.l;
+    const bV = b.volume != null ? b.volume : (b.v || 0);
+    const c = bC >= bO ? 'up' : 'down';
     const ma = (arr) => (arr && arr[i] != null ? f2(arr[i]) : '--');
-    let html = `<div>${esc(b.date)}</div>
-      <div>开 <span class="${c}">${f2(b.open)}</span> 高 <span class="${c}">${f2(b.high)}</span></div>
-      <div>收 <span class="${c}">${f2(b.close)}</span> 低 <span class="${c}">${f2(b.low)}</span></div>
-      <div>量 ${amount(b.volume)}</div>
-      <div style="margin-top:4px;color:#f0b90b">MA5 ${ma(inds.ma5)}  MA20 ${ma(inds.ma20)}</div>
-      <div style="color:#a78bfa">RSI ${inds.rsi[i] != null ? inds.rsi[i].toFixed(1) : '--'}</div>`;
+    let html = `<div>${esc(b.date != null ? b.date : b.t)}</div>
+      <div>开 <span class="${c}">${f2(bO)}</span> 高 <span class="${c}">${f2(bH)}</span></div>
+      <div>收 <span class="${c}">${f2(bC)}</span> 低 <span class="${c}">${f2(bL)}</span></div>
+      <div>量 ${amount(bV)}</div>
+      <div style="margin-top:4px;color:#ffd60a">MA5 ${ma(inds.ma5)}  MA20 ${ma(inds.ma20)}</div>
+      <div style="color:#bf5af2">RSI ${inds.rsi[i] != null ? inds.rsi[i].toFixed(1) : '--'}</div>`;
     const s = (state.signals || []).find((x) => x.index === i);
     if (s) {
-      const col = s.type === 'buy' ? '#f6465d' : '#0ecb81';
+      const col = s.type === 'buy' ? '#ff453a' : '#30d158';
       const tag = s.type === 'buy' ? '买点' : '卖点';
       html += `<div style="margin-top:4px;color:${col}">▸ ${tag}：${esc(s.reason)}</div>`;
+    }
+    const pt = (state.patterns || []).find((x) => x.index === i && (x.strength || 1) >= 2);
+    if (pt) {
+      const col = pt.type === 'bull' ? '#ff453a' : pt.type === 'bear' ? '#30d158' : '#98989d';
+      html += `<div style="color:${col}">◆ 形态：${esc(pt.name)}</div>`;
     }
     tip.innerHTML = html;
     tip.style.display = 'block';
@@ -608,17 +711,18 @@
       .join('');
 
     const m = a.metrics;
+    const px = a.price;
     const kpi = [
       ['RSI(14)', m.rsi == null ? '--' : m.rsi.toFixed(1), m.rsi > 70 ? 'up' : m.rsi < 30 ? 'down' : ''],
-      ['MA20', f2(m.ma20), m.price > m.ma20 ? 'up' : 'down'],
-      ['MA60', f2(m.ma60), m.price > m.ma60 ? 'up' : 'down'],
-      ['MA120', f2(m.ma120), m.price > m.ma120 ? 'up' : 'down'],
+      ['MA20', f2(m.ma20), m.ma20 == null ? '' : px > m.ma20 ? 'up' : 'down'],
+      ['MA60', f2(m.ma60), m.ma60 == null ? '' : px > m.ma60 ? 'up' : 'down'],
+      ['MA120', f2(m.ma120), m.ma120 == null ? '' : px > m.ma120 ? 'up' : 'down'],
       ['MACD柱', m.macdHist == null ? '--' : m.macdHist.toFixed(3), m.macdHist > 0 ? 'up' : 'down'],
       ['KDJ-K', m.kdjK == null ? '--' : m.kdjK.toFixed(1), ''],
-      ['5日涨幅', pct(m.ret5), cls(m.ret5)],
-      ['20日涨幅', pct(m.ret20), cls(m.ret20)],
-      ['60日涨幅', pct(m.ret60), cls(m.ret60)],
-      ['距52周高', m.distHigh == null ? '--' : m.distHigh.toFixed(1) + '%', cls(m.distHigh)],
+      ['5日涨幅', pct(m.r5), cls(m.r5)],
+      ['20日涨幅', pct(m.r20), cls(m.r20)],
+      ['60日涨幅', pct(m.r60), cls(m.r60)],
+      ['距52周高', m.distHigh52 == null ? '--' : m.distHigh52.toFixed(1) + '%', cls(m.distHigh52)],
       ['量比(5/20)', m.volRatio == null ? '--' : m.volRatio.toFixed(2), m.volRatio > 1.2 ? 'up' : ''],
       ['ATR%', m.atrPct == null ? '--' : m.atrPct.toFixed(2) + '%', ''],
       ['年化波动', m.volatility == null ? '--' : m.volatility.toFixed(1) + '%', ''],
@@ -636,9 +740,9 @@
       const b = document.createElement('button');
       b.className = 'btn sm';
       b.id = 'btnAddCurrent';
-      b.style.marginTop = '10px';
-      b.textContent = '加入自选';
-      $('#anaKpi').parentElement.parentElement.appendChild(b);
+      b.style.margin = '12px 14px 14px';
+      b.textContent = '＋ 加入自选';
+      $('#anaKpi').parentElement.appendChild(b);
       b.addEventListener('click', () => {
         const q = state.quotes.get(secid);
         addWatch({ secid, code: q ? q.code : secid.split('.')[1], name: q ? q.name : '', market: Number(secid.split('.')[0]) });
@@ -666,7 +770,7 @@
     $('#sigBox').innerHTML = recent.length
       ? recent
           .map((s) => {
-            const col = s.type === 'buy' ? '#f6465d' : '#0ecb81';
+            const col = s.type === 'buy' ? '#ff453a' : '#30d158';
             const tagCls = s.type === 'buy' ? 'bull' : 'bear';
             const star = s.strength >= 3 ? '★' : s.strength >= 2 ? '✦' : '';
             return `<div class="sig-row">
@@ -679,6 +783,94 @@
           })
           .join('')
       : '<div class="empty">近250根K线内未识别到买卖点</div>';
+  }
+
+  // ------------------------------------------------------------ 支撑压力 / 形态 / 筹码
+
+  function renderLevelsPanel(lv) {
+    const box = $('#levelBox');
+    if (!box) return;
+    if (!lv) {
+      box.innerHTML = '<div class="empty">数据不足</div>';
+      return;
+    }
+    const px = lv.price;
+    const rows = [];
+    (lv.resistances || []).forEach((r) => rows.push({ price: r.price, strength: r.strength, res: true }));
+    (lv.supports || []).forEach((s) => rows.push({ price: s.price, strength: s.strength, res: false }));
+    if (!rows.length) {
+      box.innerHTML = '<div class="empty">暂无有效位</div>';
+      return;
+    }
+    rows.sort((a, b) => b.price - a.price);
+    const maxS = Math.max(1, ...rows.map((r) => r.strength));
+    box.innerHTML = rows
+      .map((r) => {
+        const dist = (r.price / px - 1) * 100;
+        const col = r.res ? 'var(--up)' : 'var(--down)';
+        const bg = r.res ? 'rgba(255,69,58,.16)' : 'rgba(48,209,88,.16)';
+        return `<div class="level-row">
+          <span class="lv-tag" style="background:${bg};color:${col}">${r.res ? '压力' : '支撑'}</span>
+          <span class="pr" style="color:${col}">${f2(r.price)}</span>
+          <span class="muted" style="flex:1;font-size:11px;text-align:right">距现价 ${dist > 0 ? '+' : ''}${dist.toFixed(1)}%</span>
+          <span class="bar"><i style="width:${(r.strength / maxS) * 100}%;background:${col}"></i></span>
+        </div>`;
+      })
+      .join('');
+  }
+
+  function renderPatternsPanel(pats, bars) {
+    const box = $('#patBox');
+    if (!box) return;
+    const rec = patterns.recent(pats, bars, 60).slice().reverse();
+    if (!rec.length) {
+      box.innerHTML = '<div class="empty">近 60 根无显著形态</div>';
+      return;
+    }
+    const typeCls = { bull: 'bull', bear: 'bear', neutral: 'gray' };
+    const typeName = { bull: '看涨', bear: '看跌', neutral: '中性' };
+    box.innerHTML = rec
+      .slice(0, 24)
+      .map((p) => {
+        const col = p.type === 'bull' ? 'var(--up)' : p.type === 'bear' ? 'var(--down)' : 'var(--muted)';
+        const star = p.strength >= 3 ? '★★★' : p.strength >= 2 ? '★★' : '★';
+        return `<div class="pat-row">
+          <span class="dt">${esc(p.date)}</span>
+          <span class="nm">${esc(p.name)}</span>
+          <span class="tag ${typeCls[p.type]}">${typeName[p.type]}</span>
+          <span class="pr" style="color:${col};font-size:10.5px">${star}</span>
+        </div>`;
+      })
+      .join('');
+  }
+
+  function renderChipPanel(cp) {
+    const box = $('#chipKpi');
+    const vd = $('#chipVerdict');
+    if (!box) return;
+    if (!cp) {
+      box.innerHTML = '<div class="empty" style="grid-column:1/-1">数据不足</div>';
+      if (vd) vd.textContent = '';
+      return;
+    }
+    const v = chip.verdict(cp);
+    if (vd) vd.innerHTML = `<span class="tag ${v.cls || 'gray'}">${esc(v.label)}</span>`;
+    const items = [
+      ['获利比例', cp.profitRatio + '%', cp.profitRatio > 80 ? 'var(--up)' : cp.profitRatio < 20 ? 'var(--down)' : ''],
+      ['平均成本', f2(cp.avgCost), ''],
+      ['集中度', cp.concentration + '%', ''],
+      ['筹码峰', f2(cp.peakPrice), ''],
+      ['90%下沿', f2(cp.costLow90), ''],
+      ['90%上沿', f2(cp.costHigh90), ''],
+    ];
+    box.innerHTML = items
+      .map(([k, val, c]) => `<div class="item"><div class="k">${k}</div><div class="v" style="${c ? `color:${c}` : ''}">${val}</div></div>`)
+      .join('');
+    const cv = $('#chipCanvas');
+    if (cv && window.drawChips) {
+      cv.style.height = '230px';
+      window.drawChips(cv, cp);
+    }
   }
 
   // ------------------------------------------------------------ 量化选股
@@ -750,7 +942,7 @@
     tb.innerHTML = rows
       .map((r, i) => {
         const rt = factors.rating(r.score);
-        const color = r.score >= 66 ? '#f6465d' : r.score >= 52 ? '#f0b90b' : '#7c8aa5';
+        const color = r.score >= 66 ? '#ff453a' : r.score >= 52 ? '#ffd60a' : '#98989d';
         return `<tr>
           <td class="muted">${i + 1}</td>
           <td><span class="code" data-open="${esc(r.secid)}" data-code="${esc(r.code)}">${esc(
@@ -763,7 +955,7 @@
           <td>${f2(r.price)}</td>
           <td class="${cls(r.changePct)}">${pct(r.changePct)}</td>
           <td>${r.metrics.rsi == null ? '--' : r.metrics.rsi.toFixed(1)}</td>
-          <td class="${cls(r.metrics.ret20)}">${pct(r.metrics.ret20)}</td>
+          <td class="${cls(r.metrics.r20)}">${pct(r.metrics.r20)}</td>
           <td>${r.metrics.volRatio == null ? '--' : r.metrics.volRatio.toFixed(2)}</td>
           <td style="text-align:left">${(r.signals || [])
             .slice(0, 3)
@@ -802,8 +994,8 @@
           f2(r.price),
           r.changePct == null ? '' : r.changePct.toFixed(2),
           r.metrics.rsi == null ? '' : r.metrics.rsi.toFixed(1),
-          r.metrics.ret20 == null ? '' : r.metrics.ret20.toFixed(2),
-          r.metrics.ret60 == null ? '' : r.metrics.ret60.toFixed(2),
+          r.metrics.r20 == null ? '' : r.metrics.r20.toFixed(2),
+          r.metrics.r60 == null ? '' : r.metrics.r60.toFixed(2),
           r.metrics.volRatio == null ? '' : r.metrics.volRatio.toFixed(2),
           r.metrics.distHigh == null ? '' : r.metrics.distHigh.toFixed(2),
           `"${(r.signals || []).map((s) => s.text).join(' / ')}"`,
@@ -1048,10 +1240,11 @@
     const body = $('#sectorTable').querySelector('tbody');
     const empty = $('#sectorEmpty');
     if (!body) return;
-    body.innerHTML = '<tr><td colspan="8" class="dim">加载中…</td></tr>';
+    body.innerHTML = '<tr><td colspan="8" class="muted">加载中…</td></tr>';
     try {
       const rows = await qd.sectors(type);
       state.sectors = rows || [];
+      updateSentiment();
       if (!state.sectors.length) {
         body.innerHTML = '';
         empty.style.display = 'block';
@@ -1082,6 +1275,174 @@
       body.innerHTML = '';
       toast('板块加载失败：' + (e.message || e));
     }
+  }
+
+  // ------------------------------------------------------------ 持仓管理
+
+  function bindPortfolio() {
+    $('#btnPfAdd').addEventListener('click', addPosition);
+    $('#pfCost').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') addPosition();
+    });
+    $('#btnPfRefresh').addEventListener('click', () => refreshPortfolio(true));
+  }
+
+  async function addPosition() {
+    const code = $('#pfCode').value.trim().toUpperCase();
+    const shares = Number($('#pfShares').value);
+    const cost = Number($('#pfCost').value);
+    if (!code) return toast('请输入代码');
+    if (!(shares > 0)) return toast('请输入持仓股数');
+    if (!(cost > 0)) return toast('请输入成本价');
+    setStatus(true, '查询中…');
+    try {
+      const r = await qd.search(code);
+      const hit = r.find((x) => x.code.toUpperCase() === code) || r[0];
+      if (!hit) {
+        toast('未找到该代码');
+        return;
+      }
+      const list = state.portfolio.slice();
+      const exist = list.find((p) => p.secid === hit.secid);
+      if (exist) {
+        // 已存在：合并加权成本
+        const totalShares = exist.shares + shares;
+        exist.cost = (exist.cost * exist.shares + cost * shares) / totalShares;
+        exist.shares = totalShares;
+        for (const k of ['code', 'name', 'market']) exist[k] = hit[k];
+      } else {
+        list.push({ secid: hit.secid, code: hit.code, name: hit.name, market: hit.market, shares, cost });
+      }
+      state.portfolio = list;
+      await qd.storeSet('portfolio', list);
+      $('#pfCode').value = '';
+      $('#pfShares').value = '';
+      $('#pfCost').value = '';
+      renderPortfolio();
+      await refreshPortfolio(true);
+      toast(`已添加 ${hit.code}`);
+    } catch {
+      toast('添加失败，请稍后重试');
+    } finally {
+      setStatus(false);
+    }
+  }
+
+  async function removePosition(secid) {
+    state.portfolio = state.portfolio.filter((p) => p.secid !== secid);
+    await qd.storeSet('portfolio', state.portfolio);
+    renderPortfolio();
+    toast('已移除');
+  }
+
+  async function refreshPortfolio(force) {
+    if (!state.portfolio.length) return;
+    try {
+      const list = await qd.quotes(
+        state.portfolio.map((p) => p.secid),
+        { maxAge: force ? 0 : 8000 }
+      );
+      for (const q of list) state.quotes.set(q.secid, q);
+      renderPortfolio();
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  function renderPortfolio() {
+    const tb = $('#pfTable tbody');
+    const empty = $('#pfEmpty');
+    if (!tb) return;
+    const rows = state.portfolio.map((p) => {
+      const q = state.quotes.get(p.secid);
+      const price = q ? q.price : null;
+      const mv = price != null ? price * p.shares : null;
+      const cv = p.cost * p.shares;
+      const pnl = mv != null ? mv - cv : null;
+      const pnlPct = price != null && p.cost > 0 ? (price / p.cost - 1) * 100 : null;
+      const dayPnl = q && q.change != null ? q.change * p.shares : null;
+      return { ...p, q, price, mv, cv, pnl, pnlPct, dayPnl };
+    });
+
+    const totalMv = rows.reduce((a, r) => a + (r.mv || 0), 0);
+    const totalCv = rows.reduce((a, r) => a + r.cv, 0);
+    const totalPnl = totalMv - totalCv;
+    const totalPnlPct = totalCv > 0 ? (totalMv / totalCv - 1) * 100 : 0;
+    const totalDay = rows.reduce((a, r) => a + (r.dayPnl || 0), 0);
+
+    $('#pfSummary').innerHTML = [
+      ['总市值', '¥' + f0(Math.round(totalMv)), `成本 ¥${f0(Math.round(totalCv))}`, ''],
+      ['总浮动盈亏', (totalPnl >= 0 ? '+' : '') + f0(Math.round(totalPnl)), `收益率 ${pct(totalPnlPct)}`, cls(totalPnl)],
+      ['当日盈亏', (totalDay >= 0 ? '+' : '') + f0(Math.round(totalDay)), '按最新价 vs 昨收', cls(totalDay)],
+      ['持仓数量', String(rows.length), '只标的', ''],
+    ]
+      .map(
+        ([k, v, s, c]) =>
+          `<div class="pf-card"><div class="k">${k}</div><div class="v ${c}">${v}</div><div class="s">${s}</div></div>`
+      )
+      .join('');
+
+    empty.style.display = rows.length ? 'none' : 'block';
+    $('#pfMeta').textContent = rows.length ? `共 ${rows.length} 只 · ${new Date().toLocaleTimeString('zh-CN')}` : '';
+
+    tb.innerHTML = rows
+      .map((r) => {
+        const q = r.q;
+        const posPct = totalMv > 0 && r.mv != null ? (r.mv / totalMv) * 100 : 0;
+        return `<tr>
+          <td><span class="code" data-open="${esc(r.secid)}" data-code="${esc(r.code)}">${esc(r.code)}</span> <span class="name">${esc(r.name || '')}</span></td>
+          <td>${f0(r.shares)}</td>
+          <td>${f2(r.cost)}</td>
+          <td>${r.price == null ? '--' : f2(r.price)}</td>
+          <td class="${cls(q ? q.changePct : null)}">${q ? pct(q.changePct) : '--'}</td>
+          <td>${r.mv == null ? '--' : f0(Math.round(r.mv))}</td>
+          <td class="${cls(r.pnl)}">${r.pnl == null ? '--' : (r.pnl >= 0 ? '+' : '') + f0(Math.round(r.pnl))}</td>
+          <td class="${cls(r.pnlPct)}">${r.pnlPct == null ? '--' : pct(r.pnlPct)}</td>
+          <td class="${cls(r.dayPnl)}">${r.dayPnl == null ? '--' : (r.dayPnl >= 0 ? '+' : '') + f0(Math.round(r.dayPnl))}</td>
+          <td><span class="pos-bar"><i style="width:${posPct.toFixed(1)}%"></i></span> <span class="num" style="font-size:11px">${posPct.toFixed(1)}%</span></td>
+          <td><button class="btn sm danger" data-del="${esc(r.secid)}">删除</button></td>
+        </tr>`;
+      })
+      .join('');
+
+    tb.querySelectorAll('[data-del]').forEach((b) =>
+      b.addEventListener('click', () => removePosition(b.dataset.del))
+    );
+    tb.querySelectorAll('[data-open]').forEach((b) =>
+      b.addEventListener('click', () => openAnalyze(b.dataset.open, b.dataset.code))
+    );
+  }
+
+  // ------------------------------------------------------------ 主题
+
+  function bindTheme() {
+    $$('#themeSeg button').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const t = b.dataset.th;
+        state.config = await qd.configUpdate({ theme: t });
+        applyTheme(t);
+      });
+    });
+    if (window.matchMedia) {
+      window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+        if ((state.config && state.config.theme) === 'auto') applyTheme('auto');
+      });
+    }
+  }
+
+  function applyTheme(t) {
+    let theme = t || 'dark';
+    if (theme === 'auto') {
+      const light = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+      theme = light ? 'light' : 'dark';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+    $$('#themeSeg button').forEach((b) =>
+      b.classList.toggle('on', b.dataset.th === (t || 'dark'))
+    );
+    if (state.chart) state.chart.render();
+    if (state.chip) renderChipPanel(state.chip);
+    if (state.btResult) drawEquityPanel();
   }
 
   // ------------------------------------------------------------ 设置

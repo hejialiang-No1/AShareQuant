@@ -1,7 +1,7 @@
 {
   "name": "asharequant",
   "productName": "AShareQuant",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "AShareQuant - A股量化终端 (China A-Share Quant Terminal)",
   "main": "src/main/main.js",
   "author": "hejialiang",
@@ -11,7 +11,10 @@
     "dev": "electron . --dev",
     "pack": "electron-builder --dir --mac --arm64",
     "dist": "electron-builder --mac --arm64 --publish never",
-    "icon": "python3 scripts/make-icon.py"
+    "icon": "python3 scripts/make-icon.py",
+    "smoke": "node scripts/smoke.js",
+    "shots": "bash scripts/shots.sh",
+    "ui-smoke": "bash scripts/ui-smoke.sh"
   },
   "devDependencies": {
     "electron": "44.2.0",
@@ -33,7 +36,9 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64"]
+          "arch": [
+            "arm64"
+          ]
         }
       ],
       "category": "public.app-category.finance",
@@ -53,8 +58,17 @@
         "height": 440
       },
       "contents": [
-        { "x": 180, "y": 210, "type": "link", "path": "/Applications" },
-        { "x": 520, "y": 210, "type": "file" }
+        {
+          "x": 180,
+          "y": 210,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 520,
+          "y": 210,
+          "type": "file"
+        }
       ]
     }
   }

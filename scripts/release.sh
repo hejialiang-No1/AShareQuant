@@ -8,7 +8,7 @@ export HTTP_PROXY="${HTTP_PROXY:-socks5h://127.0.0.1:7890}"
 TOKEN="$1"
 OWNER="hejialiang-No1"
 REPO="AShareQuant"
-TAG="v1.0.0"
+TAG="v1.1.0"
 DMG="build/AShareQuant-1.0.0-arm64.dmg"
 
 echo "[1/3] 创建 Release $TAG ..."

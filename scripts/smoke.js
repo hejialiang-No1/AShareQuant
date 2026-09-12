@@ -12,6 +12,9 @@ const Ind = require('../src/shared/indicators');
 const Fac = require('../src/shared/factors');
 const BT = require('../src/shared/backtest');
 const Sig = require('../src/shared/signals');
+const Chip = require('../src/shared/chip');
+const Pat = require('../src/shared/patterns');
+const Lv = require('../src/shared/levels');
 
 ds.initCache(path.join(os.tmpdir(), 'asharequant-smoke-cache'));
 
@@ -117,6 +120,33 @@ function ok(name, cond, extra) {
     check('summary \u7EDF\u8BA1', sum.buyCount === buys.length && sum.sellCount === sells.length);
   } catch (e) { check('\u4E70\u5356\u70B9\u4FE1\u53F7', false, e.message); }
 
+  console.log('\n--- 增强分析模块（筹码/形态/压力位）---');
+  try {
+    const s = [];
+    let p = 100;
+    for (let i = 0; i < 200; i++) {
+      p += Math.sin(i / 7) * 1.6 + 0.22;
+      const o = p + (i % 3 - 1) * 0.4;
+      const c = p + (i % 5 - 2) * 0.5;
+      s.push({ date: '2024' + String(i).padStart(3, '0'), open: +o.toFixed(2), high: +(Math.max(o, c) + 1.1).toFixed(2), low: +(Math.min(o, c) - 1.1).toFixed(2), close: +c.toFixed(2), volume: 1000000 + i * 2500 });
+    }
+    const cp = Chip.compute(s, {});
+    check('筹码分布计算', cp && cp.bins.length > 0 && cp.avgCost > 0, cp ? `均价 ${cp.avgCost} 获利 ${cp.profitRatio}% 集中度 ${cp.concentration}% 峰 ${cp.peakPrice}` : '');
+    check('筹码 获利比例 0-100', cp && cp.profitRatio >= 0 && cp.profitRatio <= 100);
+    check('筹码 90%区间有效', cp && cp.costHigh90 >= cp.costLow90);
+    check('筹码 形态解读', !!Chip.verdict(cp).label);
+
+    const pats = Pat.detect(s, {});
+    const kinds = [...new Set(pats.map((x) => x.name))];
+    check('K线形态识别', pats.length > 0, `${pats.length} 个 / ${kinds.length} 种：${kinds.slice(0, 6).join(',')}`);
+    check('形态结构合法', pats.every((x) => x.name && ['bull', 'bear', 'neutral'].includes(x.type) && x.index >= 0));
+
+    const lv = Lv.compute(s, { price: s[s.length - 1].close });
+    check('支撑压力位', lv && lv.supports.length + lv.resistances.length > 0, `支撑 ${lv.supports.length} / 压力 ${lv.resistances.length}`);
+    check('枢轴点 P/R1/S1', lv && lv.pivot.P > 0 && lv.pivot.R1 > lv.pivot.P && lv.pivot.S1 < lv.pivot.P);
+    check('斐波那契 5 档', lv && lv.fib.length === 5 && lv.fib.every((f) => f.price > 0));
+  } catch (e) { check('增强分析模块', false, e.message); }
+
   console.log('\n--- \u56E0\u5B50\u5206\u6790 ---');
   try {
     const k = await ds.kline('sh.600519', { period: 'day', limit: 260, fq: 1 });
@@ -124,6 +154,10 @@ function ok(name, cond, extra) {
     const a = Fac.analyze(k.bars, q);
     check('\u8305\u53F0\u56E0\u5B50', a && typeof a.score === 'number', a ? `\u8BC4\u5206 ${a.score} ${Fac.rating(a.score).label}` : '');
     check('\u56E0\u5B50\u9879 \u2265 4', a && Object.keys(a.factors || {}).length >= 4, a ? Object.keys(a.factors).join(',') : '');
+    // 面板依赖的 metrics 字段契约：缺任一则界面显示 --
+    const NEED = ['rsi', 'ma20', 'ma60', 'ma120', 'macdHist', 'kdjK', 'r5', 'r20', 'r60', 'distHigh52', 'volRatio', 'atrPct', 'volatility', 'hi52', 'lo52'];
+    const lack = a ? NEED.filter((x) => a.metrics[x] == null) : NEED;
+    check('metrics \u5b57\u6bb5\u5951\u7ea6\u9f50\u5168', lack.length === 0, lack.length ? '\u7f3a\u5931 ' + lack.join(',') : `${NEED.length} \u9879\u5168`);
   } catch (e) { check('\u56E0\u5B50', false, e.message); }
 
   console.log('\n--- \u7B56\u7565\u56DE\u6D4B ---');

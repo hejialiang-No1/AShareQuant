@@ -25,7 +25,7 @@ function createWindow() {
     minWidth: 1120,
     minHeight: 700,
     title: 'AShareQuant A股量化终端',
-    backgroundColor: '#0b0e14',
+    backgroundColor: '#161618',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
     show: false,
@@ -65,8 +65,38 @@ function createWindow() {
     mainWindow.webContents.on('did-finish-load', () => {
       setTimeout(async () => {
         try {
-          const r = await mainWindow.webContents.executeJavaScript(`(function(){
+          const r = await mainWindow.webContents.executeJavaScript(`(async function(){
             const q = (s) => document.querySelector(s);
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+            const nav = document.querySelector('.nav-item[data-view="analyze"]');
+            if (nav) nav.click();
+            await sleep(2000);
+            const c = q('#klineCanvas');
+            const chip = q('#chipCanvas');
+            let bf = '';
+            try {
+              const cs = getComputedStyle(q('.topbar'));
+              bf = cs.backdropFilter || cs.webkitBackdropFilter || '';
+            } catch (e) { bf = 'err'; }
+            const stats = (cv) => {
+              if (!cv || cv.width < 100) return { w: 0, h: 0, any: false, size: 0, minY: -1, maxY: -1 };
+              const w = cv.width, h = cv.height;
+              let any = false;
+              try {
+                const ctx = cv.getContext('2d');
+                const da = ctx.getImageData(0, 0, w, h).data;
+                let cnt = 0, minY = -1, maxY = -1;
+                for (let y = 0; y < h; y++) {
+                  let rowHas = false;
+                  for (let x = 0; x < w; x++) if (da[(y * w + x) * 4 + 3] !== 0) { rowHas = true; cnt++; }
+                  if (rowHas) { if (minY < 0) minY = y; maxY = y; }
+                }
+                any = cnt > 0;
+                return { w, h, any, size: cnt, minY, maxY };
+              } catch (e) { return { w, h, any: false, size: -1, minY: -1, maxY: -1 }; }
+            };
+            const ks = stats(c);
+            const cs = stats(chip);
             return {
               errors: window.__errors || [],
               hasQd: typeof window.qd === 'object',
@@ -76,10 +106,24 @@ function createWindow() {
               kpiCells: document.querySelectorAll('#anaKpi .kpi').length,
               factorRows: document.querySelectorAll('#anaFactors .factor-row').length,
               scoreText: (q('#anaScore .num-big')||{}).textContent || '',
-              canvasPainted: (function(){
-                const c = q('#klineCanvas');
-                return !!(c && c.width > 100);
-              })(),
+              canvasPainted: ks.any,
+              klineW: ks.w,
+              klineH: ks.h,
+              klinePx: ks.size,
+              klineMinY: ks.minY,
+              klineMaxY: ks.maxY,
+              chipPainted: cs.any,
+              chipW: cs.w,
+              chipPx: cs.size,
+              sigRows: document.querySelectorAll('#sigBox .sig-row').length,
+              levelRows: document.querySelectorAll('#levelBox .level-row').length,
+              patRows: document.querySelectorAll('#patBox .pat-row').length,
+              chipItems: document.querySelectorAll('#chipKpi .item').length,
+              chipVerdict: (q('#chipVerdict')||{}).textContent || '',
+              pfView: !!q('#view-portfolio'),
+              themeAttr: document.documentElement.getAttribute('data-theme') || '',
+              sentiment: (q('#sentVal')||{}).textContent || '',
+              backdrop: bf,
             };
           })()`);
           console.log('SMOKE_RESULT ' + JSON.stringify(r));
@@ -88,6 +132,43 @@ function createWindow() {
         }
         mainWindow.webContents.executeJavaScript(`window.__errors.length`).catch(() => {});
         setTimeout(() => app.exit(0), 500);
+      }, 12000);
+    });
+  }
+
+  // 截图模式：应用抓取自己的窗口为 PNG（不依赖系统录屏权限）
+  // 用法：AShareQuant --shot          → 输出到 build/shots/
+  //       QD_SHOT_DIR=/x --shot      → 输出到指定目录
+  if (process.argv.includes('--shot')) {
+    const fs = require('fs');
+    const outDir = process.env.QD_SHOT_DIR || path.join(process.cwd(), 'build', 'shots');
+    const shots = [
+      { view: 'analyze', name: '01-analyze', wait: 0 },
+      { view: 'watch', name: '02-watch', wait: 900 },
+      { view: 'portfolio', name: '03-portfolio', wait: 900 },
+      { view: 'scan', name: '04-scan', wait: 900 },
+      { view: 'sector', name: '05-sector', wait: 1400 },
+      { view: 'backtest', name: '06-backtest', wait: 900 },
+      { view: 'settings', name: '07-settings', wait: 900 },
+    ];
+    mainWindow.webContents.on('did-finish-load', () => {
+      setTimeout(async () => {
+        try {
+          fs.mkdirSync(outDir, { recursive: true });
+          for (const s of shots) {
+            await mainWindow.webContents.executeJavaScript(
+              `(()=>{const n=document.querySelector('.nav-item[data-view="${s.view}"]');if(n)n.click();return !!n})()`
+            );
+            await new Promise((r) => setTimeout(r, s.wait + 1100));
+            const img = await mainWindow.webContents.capturePage();
+            const file = path.join(outDir, s.name + '.png');
+            fs.writeFileSync(file, img.toPNG());
+            console.log('SHOT ' + file);
+          }
+        } catch (e) {
+          console.log('SHOT_ERROR ' + e.message);
+        }
+        setTimeout(() => app.exit(0), 300);
       }, 12000);
     });
   }

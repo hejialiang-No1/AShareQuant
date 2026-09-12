@@ -20,6 +20,12 @@
       <div class="idx"><span class="nm">上证指数</span><span class="pv">--</span><span class="pc">--</span></div>
     </div>
 
+    <div class="sentiment" id="sentiment" title="市场情绪：由主要指数与行业板块涨跌加权">
+      <span class="lbl">情绪</span>
+      <span class="gauge"><i id="sentBar"></i></span>
+      <span class="val" id="sentVal">--</span>
+    </div>
+
     <div class="spacer"></div>
 
     <div class="search-box">
@@ -42,12 +48,13 @@
       <div class="nav-item" data-view="analyze"><span class="ic">◉</span>个股分析</div>
       <div class="nav-item" data-view="scan"><span class="ic">⚡</span>量化选股</div>
       <div class="nav-item" data-view="sector"><span class="ic">▦</span>板块热力</div>
+      <div class="nav-item" data-view="portfolio"><span class="ic">◫</span>持仓管理</div>
       <div class="nav-item" data-view="backtest"><span class="ic">⟳</span>策略回测</div>
       <div class="nav-item" data-view="alerts"><span class="ic">◔</span>预警监控</div>
       <div class="nav-item" data-view="settings"><span class="ic">⚙</span>设置</div>
       <div class="side-foot">
         数据源：腾讯 / 新浪<br />
-        T+1 · 涨跌停约束<br />
+        筹码 · 形态 · 支撑压力<br />
         <span id="footVer"></span>
       </div>
     </div>
@@ -103,7 +110,7 @@
             <h3>快捷股票池</h3>
             <span class="desc">点击加入自选</span>
           </div>
-          <div class="panel-bd" id="poolChips" style="display:flex;flex-wrap:wrap;gap:7px"></div>
+          <div class="panel-bd" id="poolChips"></div>
         </div>
       </div>
 
@@ -165,6 +172,41 @@
           <div class="panel-bd">
             <div id="sigSummary" style="display:flex;gap:14px;margin-bottom:12px;flex-wrap:wrap"></div>
             <div class="sig-list" id="sigBox"></div>
+          </div>
+        </div>
+
+        <div class="info-grid">
+          <div class="panel">
+            <div class="panel-hd">
+              <h3>支撑 / 压力位</h3>
+              <span class="desc">摆动点聚类 + 枢轴点</span>
+            </div>
+            <div class="panel-bd">
+              <div class="list-scroll" id="levelBox"></div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-hd">
+              <h3>K线形态识别</h3>
+              <span class="desc">近 60 根</span>
+            </div>
+            <div class="panel-bd">
+              <div class="list-scroll" id="patBox"></div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-hd">
+              <h3>筹码分布</h3>
+              <span class="desc" id="chipVerdict"></span>
+            </div>
+            <div class="panel-bd">
+              <div class="chip-wrap">
+                <div class="chip-canvas-box"><canvas class="chip" id="chipCanvas" height="230"></canvas></div>
+                <div class="chip-kpi" id="chipKpi"></div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -267,6 +309,53 @@
               <tbody></tbody>
             </table>
             <div class="empty" id="sectorEmpty">点击「刷新」加载板块数据</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== 持仓管理 ==================== -->
+      <div class="view" id="view-portfolio">
+        <div class="panel">
+          <div class="panel-hd">
+            <h3>持仓组合</h3>
+            <span class="desc">录入成本，实时跟踪浮动盈亏</span>
+            <div class="spacer"></div>
+            <input class="input" id="pfCode" placeholder="代码，如 600519" style="width:130px" />
+            <input class="input num" id="pfShares" placeholder="股数" style="width:100px" />
+            <input class="input num" id="pfCost" placeholder="成本价" style="width:100px" />
+            <button class="btn primary" id="btnPfAdd">添加持仓</button>
+            <button class="btn" id="btnPfRefresh">刷新行情</button>
+          </div>
+          <div class="panel-bd">
+            <div class="pf-summary" id="pfSummary"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-hd">
+            <h3>持仓明细</h3>
+            <span class="desc" id="pfMeta"></span>
+          </div>
+          <div class="panel-bd tight">
+            <table class="grid" id="pfTable">
+              <thead>
+                <tr>
+                  <th>代码 / 名称</th>
+                  <th>持仓股数</th>
+                  <th>成本价</th>
+                  <th>现价</th>
+                  <th>涨跌幅</th>
+                  <th>市值</th>
+                  <th>浮动盈亏</th>
+                  <th>盈亏%</th>
+                  <th>当日盈亏</th>
+                  <th>仓位</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div class="empty" id="pfEmpty">还没有持仓记录，输入代码 / 股数 / 成本价添加</div>
           </div>
         </div>
       </div>
@@ -379,6 +468,17 @@
           <div class="panel-bd">
             <div class="set-row">
               <div>
+                <div class="lbl">外观主题</div>
+                <div class="hint">深色 / 亮色 / 跟随系统，Apple 设计语言</div>
+              </div>
+              <div class="seg" id="themeSeg">
+                <button data-th="dark">深色</button>
+                <button data-th="light">亮色</button>
+                <button data-th="auto">跟随系统</button>
+              </div>
+            </div>
+            <div class="set-row">
+              <div>
                 <div class="lbl">K线复权方式</div>
                 <div class="hint">前复权适合技术分析，不复权适合看真实价格</div>
               </div>
@@ -425,9 +525,10 @@
             </div>
             <div class="kpi-grid" id="aboutKpi"></div>
             <div style="margin-top:14px;font-size:11.5px;color:var(--muted);line-height:1.9">
-              · 数据源：东方财富（国内直连，延迟约 15 分钟）<br />
+              · 数据源：腾讯 / 新浪 公开行情接口<br />
               · 指标：MA / EMA / MACD / RSI / BOLL / KDJ / ATR，本地实现<br />
-              · 回测：信号次日开盘成交，含手续费与滑点，可对比买入持有基准<br />
+              · 增强：筹码分布(CYQ) / K线形态识别 / 支撑压力位 / 买卖点信号 / 持仓盈亏<br />
+              · 回测：信号次日开盘成交，含手续费与滑点，严格 T+1 与涨跌停约束<br />
               · <b style="color:var(--warn)">风险提示：本工具仅用于量化研究，所有结果不构成投资建议。</b>
             </div>
           </div>

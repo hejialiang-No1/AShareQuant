@@ -8,6 +8,9 @@ const Indicators = require('../shared/indicators');
 const Factors = require('../shared/factors');
 const Backtest = require('../shared/backtest');
 const Signals = require('../shared/signals');
+const Chip = require('../shared/chip');
+const Patterns = require('../shared/patterns');
+const Levels = require('../shared/levels');
 
 const api = {
   // 应用
@@ -49,6 +52,9 @@ const api = {
   factors: Factors,
   bt: Backtest,
   signals: Signals,
+  chip: Chip,
+  patterns: Patterns,
+  levels: Levels,
 };
 
 contextBridge.exposeInMainWorld('qd', api);
